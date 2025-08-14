@@ -1,0 +1,752 @@
+
+// =====================
+// ISTRUZIONI
+// =====================
+/*
+1. Integrare il Codice2 (funzionalità clacson) dentro il Codice1 senza perdere nulla.
+2. Il pulsante deve far partire/riavviare il file WAV 0002 in loop come in Codice2 sospendendo durante il loop del wav 0002, il loop standard di wav 0001 per poi riprenderlo al rilascio del pulsante.
+3. Tutte le altre funzionalità di Codice1 devono rimanere inalterate.
+4. Generare un unico codice pronto da caricare su Arduino.
+*/
+// =====================
+
+
+
+
+
+
+
+// =====================
+// INIZIO Codice1
+// =====================
+
+
+ float progressiveResistance = baseResistance * (1.0 - (speedFactor * RESISTANCE_FADE_FACTOR));
+    
+    int finalResistance = constrain((int)progressiveResistance, MIN_RESISTANCE, MAX_RESISTANCE);
+    
+    return finalResistance;
+  } else {
+    return 0;
+  }
+}
+
+bool checkTurnLimits(int direction) {
+  if (direction > 0) {  
+    rightLimitReached = currentTurns >= MAX_TURNS_RIGHT;
+    return rightLimitReached;
+  } else {  
+    leftLimitReached = currentTurns <= -MAX_TURNS_LEFT;
+    return leftLimitReached;
+  }
+}
+
+void performMotorStep(int direction, int resistance) {
+  digitalWrite(DIR_PIN, direction > 0 ? HIGH : LOW);
+  
+  unsigned long stepDelay = STEP_DELAY_US;
+  if (resistance > 0) {
+    stepDelay += (resistance * 5);
+  }
+  
+  digitalWrite(STEP_PIN, HIGH);
+  delayMicroseconds(stepDelay);
+  digitalWrite(STEP_PIN, LOW);
+  delayMicroseconds(stepDelay);
+  
+  currentStepPosition += direction;
+  currentTurns = (float)currentStepPosition / STEPS_PER_REVOLUTION;
+  calculatedDisplayAngle = calculateDisplayAngle();
+}
+
+// ========== DISPLAY I2C MODIFICATO - TESTO AZZURRO SU SFONDO NERO ==========
+void updateSteeringDisplay() {
+  displayI2C.clearDisplay();
+  
+  // ========== GRADI NUMERICI IN AZZURRO SU SFONDO NERO ==========
+  displayI2C.setTextSize(2);
+  displayI2C.setTextColor(SSD1306_WHITE);  // Il display OLED mostra "WHITE" come azzurro/blu
+  displayI2C.setCursor(12, 4);  // Posizionamento ottimale
+  
+  // Formatta numero per essere sempre visibile e leggibile
+  float displayDegrees = calculatedDisplayAngle;
+  if (displayDegrees >= 0) {
+    displayI2C.print("+");
+  }
+  displayI2C.print(displayDegrees, 1);
+  
+  // Disegna cerchietto gradi manualmente IN AZZURRO
+  int cursorX = displayI2C.getCursorX();
+  int cursorY = displayI2C.getCursorY();
+  displayI2C.drawCircle(cursorX + 3, cursorY + 3, 2, SSD1306_WHITE);  // Cerchietto azzurro
+  displayI2C.fillCircle(cursorX + 3, cursorY + 3, 1, SSD1306_WHITE);  // Centro pieno azzurro per renderlo più visibile
+  
+  // ========== DUE RETTANGOLI ORIENTATI CORRETTAMENTE ==========
+  int centerX = 64;        // Centro display 128px
+  int centerY = 42;        // Posizionato più in basso per lasciare spazio ai gradi
+  int rectWidth = 12;      // LATO CORTO orizzontale (più stretto)
+  int rectHeight = 36;     // LATO LUNGO verticale (più alto) - ORA ORIENTATO CORRETTO!
+  int separation = 50;     // DISTANZA AUMENTATA tra i rettangoli
+  
+  // Converte l'angolo di sterzo in radianti
+  float angleRad = (calculatedDisplayAngle * PI) / 180.0;
+  
+  // ========== RETTANGOLO SINISTRO (LATO CORTO ORIZZONTALE) ==========
+  int leftCenterX = centerX - separation/2;
+  int leftCenterY = centerY;
+  
+  // Calcola i 4 vertici del rettangolo sinistro ruotato
+  float cosA = cos(angleRad);
+  float sinA = sin(angleRad);
+  
+  // Vertici del rettangolo CORRETTAMENTE ORIENTATO (lato corto orizzontale = più alto che largo)
+  int vertices[4][2] = {
+    {-rectWidth/2, -rectHeight/2},  // Vertice 1 (12x36 = stretto e alto)
+    {+rectWidth/2, -rectHeight/2},  // Vertice 2
+    {+rectWidth/2, +rectHeight/2},  // Vertice 3
+    {-rectWidth/2, +rectHeight/2}   // Vertice 4
+  };
+  
+  // Ruota e trasla vertici per rettangolo sinistro
+  int leftVertices[4][2];
+  for (int i = 0; i < 4; i++) {
+    leftVertices[i][0] = leftCenterX + (vertices[i][0] * cosA - vertices[i][1] * sinA);
+    leftVertices[i][1] = leftCenterY + (vertices[i][0] * sinA + vertices[i][1] * cosA);
+  }
+  
+  // Disegna rettangolo sinistro con bordi spessi
+  for (int i = 0; i < 4; i++) {
+    int nextI = (i + 1) % 4;
+    displayI2C.drawLine(leftVertices[i][0], leftVertices[i][1], 
+                        leftVertices[nextI][0], leftVertices[nextI][1], SSD1306_WHITE);
+  }
+  
+  // Riempie il rettangolo sinistro per renderlo più visibile
+  for (int y = -rectHeight/2; y <= rectHeight/2; y++) {
+    for (int x = -rectWidth/2; x <= rectWidth/2; x++) {
+      int px = leftCenterX + (x * cosA - y * sinA);
+      int py = leftCenterY + (x * sinA + y * cosA);
+      if (px >= 0 && px < 128 && py >= 0 && py < 64) {
+        displayI2C.drawPixel(px, py, SSD1306_WHITE);
+      }
+    }
+  }
+  
+  // ========== RETTANGOLO DESTRO (IDENTICO AL SINISTRO) ==========
+  int rightCenterX = centerX + separation/2;
+  int rightCenterY = centerY;
+  
+  // Ruota e trasla vertici per rettangolo destro
+  int rightVertices[4][2];
+  for (int i = 0; i < 4; i++) {
+    rightVertices[i][0] = rightCenterX + (vertices[i][0] * cosA - vertices[i][1] * sinA);
+    rightVertices[i][1] = rightCenterY + (vertices[i][0] * sinA + vertices[i][1] * cosA);
+  }
+  
+  // Disegna rettangolo destro con bordi spessi
+  for (int i = 0; i < 4; i++) {
+    int nextI = (i + 1) % 4;
+    displayI2C.drawLine(rightVertices[i][0], rightVertices[i][1], 
+                        rightVertices[nextI][0], rightVertices[nextI][1], SSD1306_WHITE);
+  }
+  
+  // Riempie il rettangolo destro
+  for (int y = -rectHeight/2; y <= rectHeight/2; y++) {
+    for (int x = -rectWidth/2; x <= rectWidth/2; x++) {
+      int px = rightCenterX + (x * cosA - y * sinA);
+      int py = rightCenterY + (x * sinA + y * cosA);
+      if (px >= 0 && px < 128 && py >= 0 && py < 64) {
+        displayI2C.drawPixel(px, py, SSD1306_WHITE);
+      }
+    }
+  }
+  
+  // ========== LINEA CENTRALE DI RIFERIMENTO ==========
+  displayI2C.drawLine(centerX - 50, centerY, centerX + 50, centerY, SSD1306_WHITE);
+  
+  displayI2C.display();
+}
+
+void runSteering() {
+  if (!steeringInitialized) return;
+  
+  enforceSteeringLimits();
+  
+  int escPotValue = analogRead(potPin);
+  
+  if (!motorBlocked) {
+    int resistance = calculateMotorResistance(escPotValue);
+    
+    if (resistance > 0) {
+      digitalWrite(ENABLE_PIN, LOW);
+      int current = map(resistance, MIN_RESISTANCE, MAX_RESISTANCE, 250, 400);
+      driver.rms_current(current);
+      
+      int delayTime = resistance / 20;
+      if (delayTime > 0) {
+        delay(delayTime);
+      }
+      
+    } else {
+      digitalWrite(ENABLE_PIN, HIGH);
+    }
+  }
+  
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug > 1000) {
+    Serial.print("STEERING: Giri=");
+    Serial.print(currentTurns, 2);
+    Serial.print("/±1.5, Angolo=");
+    Serial.print(calculatedDisplayAngle, 1);
+    Serial.print("°, Velocità=");
+    Serial.print(currentSpeed, 1);
+    Serial.print(", Blocked=");
+    Serial.println(motorBlocked ? "SI" : "NO");
+    lastDebug = millis();
+  }
+  
+  static unsigned long lastDisplayUpdate = 0;
+  if (millis() - lastDisplayUpdate > 80) {
+    updateSteeringDisplay();
+    lastDisplayUpdate = millis();
+  }
+}
+
+// ========== LED SCANNER CON VELOCITÀ PROPORZIONALE ==========
+
+uint8_t getDecayBrightness(int distance) {
+  if (distance > fadeLength) return 0;                
+  float factor = pow(0.5, distance);                   
+  int val = (int)(trailMaxBrightness * factor);       
+  return (val > 0) ? val : 0;                          
+}
+
+bool updateLEDs() {
+  if (NUM_LEDS <= 0 || NUM_LEDS > 1000) {             
+    Serial.println("Errore: NUM_LEDS fuori range");   
+    return false;                                      
+  }
+  if (pos < 0 || pos >= NUM_LEDS) {                    
+    Serial.println("Errore: pos fuori range");         
+    return false;                                      
+  }
+
+  fill_solid(leds, NUM_LEDS, CRGB::Black);             
+  leds[pos] = CRGB(maxBrightness, 0, 0);               
+
+  for (int i = 1; i <= fadeLength; i++) {
+    int trailPos = pos - i * direction;                
+    if (trailPos >= 0 && trailPos < NUM_LEDS) {        
+      leds[trailPos] = CRGB(getDecayBrightness(i), 0, 0); 
+    }
+  }
+
+  if (ghostCounter > 0 && ghostPos >= 0 && ghostPos < NUM_LEDS) {
+    leds[ghostPos] = CRGB(trailMaxBrightness / 2, 0, 0);
+    ghostCounter--;                                     
+  }
+
+  FastLED.show();                                       
+  return true;                                          
+}
+
+// NUOVO: Calcola velocità scanner in base al potenziometro
+void updateScannerSpeed(int potValue) {
+  if (potValue < 10) {
+    // Potenziometro a zero = velocità base (lenta)
+    currentSpeedDelay = baseSpeedDelay;
+  } else {
+    // Velocità proporzionale: più alto il pot, più veloce lo scanner
+    currentSpeedDelay = map(potValue, 10, potMaxValue, baseSpeedDelay, minSpeedDelay);
+    // Assicurati che non vada mai sotto il minimo
+    currentSpeedDelay = constrain(currentSpeedDelay, minSpeedDelay, baseSpeedDelay);
+  }
+}
+
+void otherTasks() {
+  static unsigned long lastMillis = 0;                  
+  if (millis() - lastMillis > 5000) {                   
+    lastMillis = millis();                               
+    Serial.println("Esecuzione altra attività...");     
+  }
+}
+
+// ========== SETUP ==========
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+  
+  Serial.println("=== INIZIALIZZAZIONE SISTEMA COMPLETO CON CLACSON ===");
+  Serial.println("🚨 NUOVO: Sistema clacson professionale integrato");
+  Serial.println("✅ Display I2C GM009605v4.3 - RETTANGOLI INGRANDITI 3X");
+  Serial.println("✅ Gradi numerici OTTIMIZZATI per 128x64 pixel");
+  Serial.println("✅ LED Scanner con velocità variabile");
+  Serial.println("✅ Orientamento display: lato corto orizzontale");
+  Serial.println("✅ TESTO AZZURRO: rimosso sfondo bianco, testo naturalmente azzurro");
+  Serial.println("⚠️  ATTENZIONE: Verificare step-down 24V->15V!");
+  
+  // ========== INIZIALIZZAZIONE DISPLAY I2C ==========
+  if (!displayI2C.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("❌ ERRORE: Display I2C non trovato per STEERING!");
+  } else {
+    Serial.println("✅ Display I2C steering inizializzato");
+  }
+  
+  // ========== INIZIALIZZAZIONE CLACSON ==========
+  bool hornOk = initHornSystem();
+  if (!hornOk) {
+    Serial.println("❌ ERRORE: Sistema clacson non inizializzato!");
+  } else {
+    Serial.println("✅ Sistema clacson completamente integrato!");
+    Serial.println("  - DFPlayer dedicato su Serial3");
+    Serial.println("  - Latenza ottimizzata con pre-carico");
+    Serial.println("  - Loop seamless per suono continuo");
+    Serial.println("  - Anti-blocco per pressioni rapide");
+  }
+  
+  // ========== INIZIALIZZAZIONE STEERING ==========
+  bool steeringOk = initSteering();
+  if (!steeringOk) {
+    Serial.println("❌ ERRORE: Inizializzazione STEERING fallita!");
+  } else {
+    Serial.println("✅ STEERING inizializzato con successo!");
+    Serial.println("  - Limite giri: ±1.5");
+    Serial.println("  - Resistenza progressiva attiva");
+    Serial.println("  - Display PERFEZIONATO: rettangoli 36x12px, gradi AZZURRI visibili");
+  }
+  
+  // ========== INIZIALIZZAZIONE LED SCANNER ==========
+  FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.setBrightness(255);  
+  Serial.println("✅ LED scanner con velocità variabile inizializzato");
+
+  // ========== INIZIALIZZAZIONE DFPLAYER PRINCIPALE (KITT SCANNER) ==========
+  DFPLAYER_SERIAL_PORT.begin(9600);
+
+  if (myDFPlayer.begin(DFPLAYER_SERIAL_PORT)) {
+    myDFPlayer.volume(dfPlayerVolume);
+    myDFPlayer.play(scannerTrackNumber);
+    dfPlayerOk = true;  
+    Serial.println("✅ DFPlayer principale (KITT) inizializzato!");
+  } else {
+    Serial.println("❌ ERRORE: DFPlayer principale non inizializzato!");
+  }
+
+  // ========== INIZIALIZZAZIONE LED BAR ==========
+  for (int i = 0; i < numLeds; i++) {
+    pinMode(ledBarPins[i], OUTPUT);
+    digitalWrite(ledBarPins[i], LOW);
+  }
+
+  // ========== INIZIALIZZAZIONE ESC ==========
+  esc.attach(escPwmPin, escMinPulse, escMaxPulse);
+  esc.writeMicroseconds(escMinPulse);
+
+  // ========== INIZIALIZZAZIONE SENSORE HALL ==========
+  pinMode(hallSensorPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(hallSensorPin), countPulse, FALLING);
+  lastHallState = digitalRead(hallSensorPin);       
+  lastHallStateChangeTime = millis();               
+
+  // ========== INIZIALIZZAZIONE DISPLAY SPI ==========
+  displaySPI.begin(SSD1306_SWITCHCAPVCC);
+  displaySPI.clearDisplay();
+  displaySPI.setTextSize(2);
+  displaySPI.setTextColor(SSD1306_WHITE);
+  displaySPI.setCursor(0, 0);
+  displaySPI.print("KITT Mode");
+  displaySPI.setCursor(0, 25);
+  displaySPI.setTextSize(1);
+  displaySPI.print("+ CLACSON Ready!");  
+  displaySPI.display();
+
+  Serial.println("🎉 === SETUP COMPLETO CON CLACSON INTEGRATO! ===");
+  Serial.println("🚨 Premi il pulsante sul pin 5 per attivare il clacson!");
+  Serial.println("🎛️  Tutti i sistemi operativi e sincronizzati");
+}
+
+// ========== LOOP PRINCIPALE ==========
+
+void loop() {
+  unsigned long now = millis();  
+
+  // ========== SISTEMA CLACSON (NUOVA PRIORITÀ MASSIMA) ==========
+  runHornSystem();
+
+  // ========== STEERING MIGLIORATO ==========
+  runSteering();
+
+  // ========== LED SCANNER CON VELOCITÀ VARIABILE ==========
+  if (!ledUpdateError) {  
+    if (now - lastUpdate >= currentSpeedDelay) {  // USA LA VELOCITÀ VARIABILE
+      bool success = updateLEDs();          
+      if (!success) {                       
+        Serial.println("Aggiornamento LED fallito, blocco aggiornamento LED");
+        ledUpdateError = true;              
+        fill_solid(leds, NUM_LEDS, CRGB::Black);  
+        FastLED.show();
+      } else {
+        int nextPos = pos + direction;       
+        if (nextPos >= NUM_LEDS || nextPos < 0) { 
+          ghostPos = pos - direction;          
+          ghostCounter = ghostDuration;        
+          direction = -direction;               
+        }
+        pos += direction;                       
+      }
+      lastUpdate = now;                         
+    }
+  } else {  
+    static unsigned long lastBlink = 0;
+    static bool ledOn = false;
+    if (now - lastBlink > 500) {               
+      lastBlink = now;
+      ledOn = !ledOn;
+      fill_solid(leds, NUM_LEDS, CRGB::Black);
+      if (ledOn) leds[0] = CRGB::Red;
+      FastLED.show();
+    }
+  }
+
+  otherTasks();  
+
+  // ========== DFPLAYER PRINCIPALE (KITT SCANNER) ==========
+  if (dfPlayerOk) {  
+    if (isWaitingLoopDelay) {               
+      if (now - loopDelayStartTime >= 3500) {  
+        myDFPlayer.play(scannerTrackNumber);
+        isWaitingLoopDelay = false;
+      }
+    } else if (myDFPlayer.available()) {     
+      if (myDFPlayer.readType() == DFPlayerPlayFinished && !isWaitingLoopDelay) {
+        loopDelayStartTime = now;            
+        isWaitingLoopDelay = true;
+      }
+    }
+  }
+
+  // ========== GESTIONE POTENZIOMETRO E CONTROLLI ==========
+  int potValue = analogRead(potPin);
+  
+  // ========== AGGIORNA VELOCITÀ SCANNER LED ==========
+  updateScannerSpeed(potValue);  // NUOVO: Velocità scanner proporzionale
+  
+  if (potValue < 10) {  
+    potOk = false;
+    esc.writeMicroseconds(escMinPulse);  
+    
+    for (int i = 0; i < numLeds; i++) {
+      digitalWrite(ledBarPins[i], LOW);
+    }
+    
+  } else {
+    potOk = true;
+    if (potValue > potMaxValue) potValue = potMaxValue;  
+    int escTargetPulse = map(potValue, 0, potMaxValue, escMinPulse, escMaxPulse);  
+    const int step = 20;  
+    if (escCurrentPulse < escTargetPulse) {
+      escCurrentPulse += step;
+      if (escCurrentPulse > escTargetPulse) escCurrentPulse = escTargetPulse;
+    } else if (escCurrentPulse > escTargetPulse) {
+      escCurrentPulse -= step;
+      if (escCurrentPulse < escTargetPulse) escCurrentPulse = escTargetPulse;
+    }
+    esc.writeMicroseconds(escCurrentPulse);  
+
+    int ledsToLight = map(potValue, 0, potMaxValue, 0, numLeds);  
+    for (int i = 0; i < numLeds; i++) {
+      if (i < ledsToLight) {
+        digitalWrite(ledBarPins[i], HIGH);   
+      } else {
+        digitalWrite(ledBarPins[i], LOW);    
+      }
+    }
+  }
+
+  // ========== CALCOLO RPM E AGGIORNAMENTO DISPLAY SPI ==========
+  if (now - lastRPMUpdate >= 500) {
+    currentRPM = (pulseCount * 60.0) / 0.5;  
+    pulseCount = 0;                          
+    lastRPMUpdate = now;                     
+    updateSPIDisplay(currentRPM);            
+  }
+
+  // ========== CONTROLLI PERIODICI E STATUS SISTEMA ==========
+  static unsigned long lastCheckTime = 0;
+  if (now - lastCheckTime > 5000) {
+    lastCheckTime = now;
+
+    int currentHallState = digitalRead(hallSensorPin);  
+    if (currentHallState != lastHallState) {            
+      lastHallState = currentHallState;
+      lastHallStateChangeTime = now;
+    }
+    hallSensorOk = (now - lastHallStateChangeTime < 5000);  
+    Serial.print("Sensore Hall status: ");
+    Serial.println(hallSensorOk ? "OK" : "NON COLLEGATO");
+
+    // ========== STATUS SISTEMA COMPLETO CON CLACSON ==========
+    Serial.println("=== STATUS SISTEMA COMPLETO CON CLACSON ===");
+    Serial.print("🚨 CLACSON: "); 
+    Serial.print(hornSystemOk ? "✅ OK" : "❌ ERRORE");
+    if (hornSystemOk) {
+      Serial.print(" (");
+      Serial.print(hornIsPlaying ? "SUONANDO" : "IDLE");
+      Serial.println(")");
+    } else {
+      Serial.println();
+    }
+    
+    Serial.print("🎵 DFPlayer KITT: "); Serial.println(dfPlayerOk ? "✅ OK" : "❌ ERRORE");
+    Serial.print("💡 LED KITT: "); Serial.println(ledUpdateError ? "❌ ERRORE" : "✅ OK");
+    Serial.print("🎛️  Potenziometro ESC: "); Serial.println(potOk ? "✅ OK" : "❌ ERRORE");
+    Serial.print("📡 Hall Sensor: "); Serial.println(hallSensorOk ? "✅ OK" : "❌ ERRORE");
+    Serial.print("🚗 STEERING: "); Serial.println(steeringInitialized ? "✅ OK" : "❌ ERRORE");
+    
+    if (steeringInitialized) {
+      Serial.print("  - Giri attuali: "); Serial.print(currentTurns, 3); Serial.println(" / ±1.5");
+      Serial.print("  - Angolo display: "); Serial.print(calculatedDisplayAngle, 1); Serial.println("°");
+      Serial.print("  - Resistenza progressiva: "); 
+      int escPot = analogRead(potPin);
+      int resistance = calculateMotorResistance(escPot);
+      Serial.print(resistance); Serial.println("%");
+      Serial.print("  - Stato: "); Serial.println(motorBlocked ? "BLOCCATO" : "LIBERO");
+      Serial.print("  - Velocità rilevata: "); Serial.println(currentSpeed, 2);
+    }
+    
+    // Info velocità scanner LED
+    int currentPot = analogRead(potPin);
+    Serial.print("🔄 LED Scanner: Velocità=");
+    Serial.print(currentSpeedDelay);
+    Serial.print("ms (Pot=");
+    Serial.print(currentPot);
+    Serial.println(")");
+    
+    Serial.println("=== FUNZIONALITÀ INTEGRATE ===");
+    Serial.println("🚨 CLACSON: Pin 5 - Pressione continua = loop seamless");
+    Serial.println("✅ Display I2C: Rettangoli INGRANDITI 3X (36x12px)");
+    Serial.println("✅ Orientamento: Lato corto orizzontale CORRETTO");
+    Serial.println("✅ Gradi numerici: Dimensione 2 OTTIMIZZATA per GM009605v4.3");
+    Serial.println("✅ Layout: Bilanciato per display 128x64 pixel");
+    Serial.println("✅ Rettangoli PIENI per massima visibilità");
+    Serial.println("✅ LED Scanner: velocità proporzionale al potenziometro");
+    Serial.println("✅ TESTO AZZURRO: Sfondo nero naturale, numeri e simbolo gradi in azzurro");
+    Serial.println("✅ CLACSON INTEGRATO: DFPlayer dedicato, latenza zero, anti-blocco");
+    Serial.println("🎉 TUTTI I SISTEMI OPERATIVI E SINCRONIZZATI!");
+    Serial.println("================================================");
+  }
+}
+
+// ========== INTERRUPT E FUNZIONI AUSILIARIE ==========
+
+void countPulse() {
+  pulseCount++;   
+}
+
+void updateSPIDisplay(float rpm) {
+  displaySPI.clearDisplay();             
+  displaySPI.setTextSize(2);
+  displaySPI.setTextColor(SSD1306_WHITE);
+  displaySPI.setCursor(0, 0);
+  displaySPI.print("RPM:");              
+  displaySPI.setCursor(0, 30);
+  displaySPI.print((int)rpm);             
+  if ((millis() - lastHallStateChangeTime) >= 5000) {   
+    displaySPI.setCursor(0, 50);
+    displaySPI.setTextSize(1);
+    displaySPI.print("ERRORE HALL SENSOR");              
+  }
+  displaySPI.display();                   
+}
+
+
+
+// =====================
+// FINE Codice1
+// =====================
+
+
+
+
+// =====================
+// INIZIO Codice2 (clacson)
+// =====================
+
+#include <DFRobotDFPlayerMini.h> 
+#define DFPLAYER_SERIAL Serial2
+DFRobotDFPlayerMini player;
+
+const int pinPulsante = 5;
+bool buttonPressed = false;
+bool lastRawState = HIGH;
+unsigned long lastPressTime = 0;
+unsigned long lastReleaseTime = 0;
+
+// Debounce
+const unsigned long pressDebounce = 10;   
+const unsigned long releaseDebounce = 50; 
+
+bool isPlaying = false;
+unsigned long playStartTime = 0;
+unsigned long lastCommandTime = 0;
+const unsigned long minCommandInterval = 120; // tempo minimo sicuro
+
+// Durata file WAV
+const unsigned long fileDuration = 109;
+const unsigned long loopMargin = 4; // ridotto per massima reattività
+
+enum PlayerState {
+  IDLE,
+  STARTING,
+  PLAYING,
+  STOPPING
+};
+PlayerState playerState = IDLE;
+
+void setup() {
+  pinMode(pinPulsante, INPUT_PULLUP);
+  Serial.begin(115200);
+  DFPLAYER_SERIAL.begin(9600);
+  
+  Serial.println("Inizializzo DFPlayer...");
+  
+  bool initSuccess = false;
+  for (int i = 0; i < 3 && !initSuccess; i++) {
+    if (player.begin(DFPLAYER_SERIAL)) {
+      initSuccess = true;
+      Serial.println("DFPlayer inizializzato con successo!");
+    } else {
+      Serial.print("Tentativo ");
+      Serial.print(i + 1);
+      Serial.println(" fallito, riprovo...");
+      delay(1000);
+    }
+  }
+  
+  if (!initSuccess) {
+    Serial.println("ERRORE: DFPlayer non inizializzato dopo 3 tentativi!");
+    while (true) delay(1000);
+  }
+  
+  delay(500);
+  player.volume(20);
+  delay(300);
+  
+  // Pre-carico silenzioso
+  Serial.println("Pre-carico silenzioso...");
+  player.volume(0);
+  delay(80);
+  player.play(2);
+  delay(200);
+  player.stop();
+  delay(150);
+  player.volume(20);
+  
+  Serial.println("Sistema pronto!");
+  delay(200);
+}
+
+bool sendSafeCommand(int commandType, int value = 0) {
+  unsigned long currentTime = millis();
+  if (currentTime - lastCommandTime < minCommandInterval) return false;
+  
+  while (DFPLAYER_SERIAL.available()) DFPLAYER_SERIAL.read();
+  
+  switch (commandType) {
+    case 1: player.play(value); break;
+    case 2: player.stop(); break;
+    case 3: player.volume(value); break;
+  }
+  
+  lastCommandTime = currentTime;
+  return true;
+}
+
+void loop() {
+  // Pulizia buffer DFPlayer per evitare blocchi
+  if (player.available()) player.readType();
+
+  bool rawState = digitalRead(pinPulsante);
+  unsigned long currentTime = millis();
+  
+  if (rawState != lastRawState) {
+    if (rawState == LOW) {
+      if (currentTime - lastPressTime >= pressDebounce) {
+        buttonPressed = true;
+        lastPressTime = currentTime;
+        Serial.println("=== PULSANTE PREMUTO ===");
+        
+        if (!isPlaying) {
+          startHorn();
+        } else {
+          Serial.println("Riavvio veloce");
+          // niente stop, play diretto per evitare reset DFPlayer
+          sendSafeCommand(1, 2);
+          playStartTime = currentTime;
+        }
+      }
+    } else {
+      if (currentTime - lastReleaseTime >= releaseDebounce) {
+        buttonPressed = false;
+        lastReleaseTime = currentTime;
+        Serial.println("Pulsante rilasciato");
+      }
+    }
+  }
+  lastRawState = rawState;
+  
+  handlePlayback(currentTime);
+}
+
+void startHorn() {
+  Serial.println(">>> AVVIO CLACSON <<<");
+  sendSafeCommand(1, 2);
+  playerState = STARTING;
+  playStartTime = millis();
+  isPlaying = true;
+}
+
+void handlePlayback(unsigned long currentTime) {
+  if (!isPlaying) return;
+  
+  unsigned long elapsed = currentTime - playStartTime;
+  
+  switch (playerState) {
+    case STARTING:
+      if (elapsed > 40) playerState = PLAYING;
+      break;
+      
+    case PLAYING:
+      if (!buttonPressed && elapsed > fileDuration) {
+        stopHorn();
+      }
+      else if (buttonPressed && elapsed >= (fileDuration - loopMargin)) {
+        if (currentTime - lastCommandTime >= minCommandInterval) {
+          Serial.println("-> Loop veloce");
+          sendSafeCommand(1, 2);
+          playStartTime = currentTime;
+        }
+      }
+      break;
+      
+    case STOPPING:
+      if (elapsed > 80) {
+        playerState = IDLE;
+        isPlaying = false;
+      }
+      break;
+  }
+}
+
+void stopHorn() {
+  Serial.println(">>> STOP CLACSON <<<");
+  sendSafeCommand(2);
+  playerState = IDLE;
+  isPlaying = false;
+}
+
+
+// =====================
+// FINE Codice2
+// =====================
